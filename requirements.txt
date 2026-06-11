@@ -1,8 +1,0 @@
-streamlit
-requests
-pandas
-numpy
-plotly
-ccxt
-streamlit-autorefresh
-python-telegram-bot
