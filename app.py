@@ -2,58 +2,56 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Konfigurasi Tampilan
-st.set_page_config(page_title="Pro Crypto Dashboard", layout="wide")
+# Konfigurasi Layout agar lebar dan padat
+st.set_page_config(page_title="Indodax Pro Dashboard", layout="wide")
 
-# Judul dan Styling CSS
-st.markdown("""
-    <style>
-    .main {background-color: #f5f7f9;}
-    .stMetric {background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
-    </style>
-""", unsafe_allow_html=True)
+st.title("📊 Indodax Real-time Dashboard")
 
-st.title("🚀 Pro Crypto Dashboard")
-
-# Fungsi Ambil Data
-@st.cache_data(ttl=60) # Data di-refresh setiap 60 detik
-def get_data():
+@st.cache_data(ttl=30) # Refresh lebih sering
+def get_detailed_data():
     url = "https://indodax.com/api/summaries"
     try:
         response = requests.get(url)
         data = response.json()['tickers']
         rows = []
         for pair, info in data.items():
+            # Menghitung % perubahan jika ada data base_volume/last
+            last = float(info['last'])
+            high = float(info['high'])
+            low = float(info['low'])
+            vol = float(info.get('vol_idr', 0))
+            
             rows.append({
-                "Koin": pair.upper(),
-                "Harga": float(info['last']),
-                "Volume": float(info.get('vol_idr', 0))
+                "Koin": pair.upper().replace("_IDR", ""),
+                "Harga (IDR)": last,
+                "High (24h)": high,
+                "Low (24h)": low,
+                "Volume (IDR)": vol
             })
         return pd.DataFrame(rows)
     except:
         return pd.DataFrame()
 
-df = get_data()
+df = get_detailed_data()
 
 if not df.empty:
-    # Top 3 Statistik
-    col1, col2, col3 = st.columns(3)
-    max_vol_coin = df.loc[df['Volume'].idxmax()]
-    col1.metric("Total Koin", len(df))
-    col2.metric("Volume Tertinggi", max_vol_coin['Koin'], f"{max_vol_coin['Volume']:,.0f}")
-    col3.metric("BTC/IDR", f"{df[df['Koin']=='BTC_IDR']['Harga'].values[0]:,.0f}")
-
-    # Grafik Volume
-    st.subheader("Visualisasi Volume Perdagangan")
-    top_10 = df.nlargest(10, 'Volume')
-    st.bar_chart(top_10.set_index('Koin')['Volume'])
-
-    # Tabel Pencarian
-    st.subheader("Data Market")
-    query = st.text_input("🔍 Cari koin (misal: ETH):")
-    if query:
-        df = df[df['Koin'].str.contains(query.upper())]
+    # Sidebar untuk filter
+    st.sidebar.header("Filter Market")
+    min_vol = st.sidebar.slider("Minimal Volume (Miliar IDR)", 0, int(df['Volume (IDR)'].max()/1000000000), 0)
     
-    st.dataframe(df.sort_values(by='Volume', ascending=False), use_container_width=True)
+    # Terapkan filter
+    df_filtered = df[df['Volume (IDR)'] >= (min_vol * 1000000000)]
+    
+    # Tampilan tabel dengan format angka agar mudah dibaca
+    st.dataframe(
+        df_filtered.style.format({
+            "Harga (IDR)": "{:,.0f}",
+            "High (24h)": "{:,.0f}",
+            "Low (24h)": "{:,.0f}",
+            "Volume (IDR)": "{:,.0f}"
+        }),
+        use_container_width=True,
+        height=600
+    )
 else:
-    st.warning("Data sedang dimuat atau gagal terhubung ke server Indodax.")
+    st.error("Gagal mengambil data dari Indodax.")
