@@ -2,36 +2,55 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="Detektor Pump Indodax", layout="wide")
-st.title("📊 Detektor Koin Pump - Indodax")
+# Konfigurasi Halaman
+st.set_page_config(page_title="Crypto Dashboard", layout="wide")
 
-def get_indodax_data():
+# Judul dan CSS Kustom agar mirip Dashboard
+st.markdown("""
+    <style>
+    .metric-card {background-color: #f0f2f6; padding: 20px; border-radius: 10px;}
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("📈 Crypto Market Dashboard")
+
+# Fungsi ambil data
+def get_data():
     url = "https://indodax.com/api/summaries"
     try:
         response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()['tickers']
+        return response.json()['tickers']
     except:
         return None
-    return None
 
-data = get_indodax_data()
+data = get_data()
+
 if data:
+    # Mengolah data ke DataFrame
     tickers = []
     for pair, info in data.items():
-        # Menggunakan .get agar tidak error jika data tidak ditemukan
-        vol = info.get('vol_idr', info.get('vol_btc', 0)) 
         tickers.append({
             "Koin": pair.upper(),
-            "Harga": float(info.get('last', 0)),
-            "Volume": float(vol)
+            "Harga": float(info['last']),
+            "Volume": float(info.get('vol_idr', 0))
         })
-    
     df = pd.DataFrame(tickers)
-    avg_vol = df['Volume'].mean()
-    pump_coins = df[df['Volume'] > avg_vol * 2].sort_values(by='Volume', ascending=False)
-    
-    st.subheader("Koin dengan Lonjakan Volume Tinggi:")
-    st.table(pump_coins.head(10))
+
+    # 1. Menampilkan Metric (Statistik Utama di atas)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Koin Dipantau", len(df))
+    col2.metric("Volume Tertinggi (IDR)", f"{df['Volume'].max():,.0f}")
+    col3.metric("Harga BTC (IDR)", f"{df[df['Koin']=='BTC_IDR']['Harga'].values[0]:,.0f}")
+
+    # 2. Fitur Pencarian dan Filter
+    st.subheader("Market Overview")
+    search = st.text_input("Cari Koin (contoh: BTC):").upper()
+    if search:
+        df = df[df['Koin'].str.contains(search)]
+
+    # 3. Menampilkan Tabel
+    st.dataframe(df, use_container_width=True)
+
 else:
+    st.error("Gagal memuat data pasar.")
     st.error("Gagal mengambil data dari Indodax. Silakan refresh.")
