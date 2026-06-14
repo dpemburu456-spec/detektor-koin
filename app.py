@@ -10,7 +10,7 @@ import datetime
 # 1. INITIALIZATION & CONFIGURATION (Terminal Style)
 # =====================================================================
 st.set_page_config(
-    page_title="Coin Best Terminal V3",
+    page_title="Coin Best Terminal V3.1",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -131,10 +131,26 @@ def analyze_crypto_core(coin_symbol, market_tickers):
     }
 
 # =====================================================================
-# 4. SIDEBAR NAVIGATION
+# 4. SIDEBAR NAVIGATION & WATCHLIST MANAGER (Balik & Diperbaiki)
 # =====================================================================
-st.sidebar.title("📡 COIN BEST V3")
+st.sidebar.title("📡 COIN BEST V3.1")
 st.sidebar.markdown("*Indodax Signal Radar & Terminal*")
+
+# Komponen Pengelola Watchlist (Sekarang permanen di sidebar)
+st.sidebar.subheader("⭐ Kelola Watchlist")
+coin_to_add = st.sidebar.selectbox("Tambah Koin Ke Watchlist:", ["Select..."] + [c for c in all_idr_coins if c not in st.session_state.watchlist])
+if coin_to_add != "Select...":
+    st.session_state.watchlist.append(coin_to_add)
+    st.sidebar.success(f"{coin_to_add} Ditambahkan!")
+    st.rerun()
+
+coin_to_remove = st.sidebar.selectbox("Hapus Koin Dari Watchlist:", ["Select..."] + st.session_state.watchlist)
+if coin_to_remove != "Select...":
+    st.session_state.watchlist.remove(coin_to_remove)
+    st.sidebar.warning(f"{coin_to_remove} Dihapus!")
+    st.rerun()
+
+st.sidebar.markdown("---")
 
 menu_nav = st.sidebar.radio("PILIH MODUL TERMINAL:", [
     "🖥️ MARKET OVERVIEW & RADAR", 
@@ -146,8 +162,12 @@ menu_nav = st.sidebar.radio("PILIH MODUL TERMINAL:", [
 # =====================================================================
 # 5. DASHBOARD INTERFACE LAYOUT
 # =====================================================================
-watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
-df_watchlist = pd.DataFrame(watchlist_data)
+# Amankan proses data agar tidak error jika watchlist kosong
+if len(st.session_state.watchlist) > 0:
+    watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
+    df_watchlist = pd.DataFrame(watchlist_data)
+else:
+    df_watchlist = pd.DataFrame()
 
 # --- MODUL 1: RADAR DASHBOARD ---
 if menu_nav == "🖥️ MARKET OVERVIEW & RADAR":
@@ -155,92 +175,94 @@ if menu_nav == "🖥️ MARKET OVERVIEW & RADAR":
     st.caption("Memproses volume, volatilitas tinggi, dan whale tracking otomatis bursa Indodax")
     
     st.subheader("📊 Hasil Pemindaian Sinyal Kuantitatif (Watchlist Anda)")
-    st.dataframe(df_watchlist[[
-        "Coin", "Pump Score", "Confidence", "Whale Activity", 
-        "BUY Entry (Rp)", "Stop Loss (Rp)", "TP1 (Rp)", "TP2 (Rp)", "TP3 (Rp)"
-    ]], use_container_width=True)
+    if not df_watchlist.empty:
+        st.dataframe(df_watchlist[[
+            "Coin", "Pump Score", "Confidence", "Whale Activity", 
+            "BUY Entry (Rp)", "Stop Loss (Rp)", "TP1 (Rp)", "TP2 (Rp)", "TP3 (Rp)"
+        ]], use_container_width=True)
+    else:
+        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu melalui sidebar di kiri.")
     
     st.markdown("### 🚀 Top Global Pump Candidates (Indodax)")
     global_analysis = [analyze_crypto_core(coin, tickers) for coin in all_idr_coins[:25]]
     df_global = pd.DataFrame(global_analysis).sort_values(by="Pump Score", ascending=False)
     st.dataframe(df_global[["Coin", "Pump Score", "Confidence", "Whale Activity", "Volume IDR"]].head(5), use_container_width=True)
 
-# --- MODUL 2: NEW!! KALKULATOR MODAL & FEE ---
+# --- MODUL 2: KALKULATOR MODAL & FEE ---
 elif menu_nav == "🧮 KALKULATOR MODAL & FEE":
     st.title("🧮 INSTITUTIONAL MONEY MANAGEMENT & FEE CALCULATOR")
     st.caption("Hitung ukuran posisi aman (Position Sizing) otomatis berdasarkan modal dan potongan fee bursa Indodax")
 
-    # Input User
-    col_k1, col_k2 = st.columns(2)
-    with col_k1:
-        total_equity = st.number_input("Total Saldo Rupiah Anda (IDR):", min_value=10000, value=1000000, step=50000)
-        risk_percentage = st.slider("Maksimal Risiko per Trade (% dari total saldo):", 1.0, 10.0, 2.0, step=0.5)
-    with col_k2:
-        selected_coin_k = st.selectbox("Pilih Koin Target Sinyal:", df_watchlist["Coin"].tolist())
-        fee_type = st.radio("Tipe Eksekusi Order Indodax:", ["Taker (Instant/Market Order - Fee 0.51%)", "Maker (Limit Order - Fee 0.31%)"])
+    if not df_watchlist.empty:
+        col_k1, col_k2 = st.columns(2)
+        with col_k1:
+            total_equity = st.number_input("Total Saldo Rupiah Anda (IDR):", min_value=10000, value=1000000, step=50000)
+            risk_percentage = st.slider("Maksimal Risiko per Trade (% dari total saldo):", 1.0, 10.0, 2.0, step=0.5)
+        with col_k2:
+            selected_coin_k = st.selectbox("Pilih Koin Target Sinyal:", df_watchlist["Coin"].tolist())
+            fee_type = st.radio("Tipe Eksekusi Order Indodax:", ["Taker (Instant/Market Order - Fee 0.51%)", "Maker (Limit Order - Fee 0.31%)"])
 
-    # Ambil data koin terpilih
-    coin_k_data = df_watchlist[df_watchlist["Coin"] == selected_coin_k].iloc[0]
-    price_entry = coin_k_data["Raw Price"]
-    price_sl = coin_k_data["Raw SL"]
-    price_tp = coin_k_data["Raw TP1"] # Proksi target pertama
-    
-    # Set Fee rate berdasarkan aturan Indodax
-    fee_rate = 0.0051 if "Taker" in fee_type else 0.0031
+        # Perhitungan data posisi
+        coin_k_data = df_watchlist[df_watchlist["Coin"] == selected_coin_k].iloc[0]
+        price_entry = coin_k_data["Raw Price"]
+        price_sl = coin_k_data["Raw SL"]
+        price_tp = coin_k_data["Raw TP1"]
+        
+        fee_rate = 0.0051 if "Taker" in fee_type else 0.0031
 
-    # Perhitungan Matematika Manajemen Risiko Berbasis Formula Kelas Atas
-    max_risk_idr = total_equity * (risk_percentage / 100)
-    price_loss_percentage = (price_entry - price_sl) / price_entry
-    
-    # Formula Ukuran Posisi Aman
-    allocated_capital = max_risk_idr / price_loss_percentage if price_loss_percentage > 0 else max_risk_idr
-    if allocated_capital > total_equity:
-        allocated_capital = total_equity
+        max_risk_idr = total_equity * (risk_percentage / 100)
+        price_loss_percentage = (price_entry - price_sl) / price_entry
+        
+        allocated_capital = max_risk_idr / price_loss_percentage if price_loss_percentage > 0 else max_risk_idr
+        if allocated_capital > total_equity:
+            allocated_capital = total_equity
 
-    # Perhitungan Detail Potongan FEE Indodax
-    fee_beli = allocated_capital * fee_rate
-    net_capital_bought = allocated_capital - fee_beli
-    amount_coin_got = net_capital_bought / price_entry
-    
-    # Estimasi Penjualan saat TP dan SL (Termasuk Potongan Fee Jual)
-    gross_sell_tp = amount_coin_got * price_tp
-    fee_jual_tp = gross_sell_tp * fee_rate
-    net_sell_tp = gross_sell_tp - fee_jual_tp
-    net_profit_idr = net_sell_tp - allocated_capital
+        fee_beli = allocated_capital * fee_rate
+        net_capital_bought = allocated_capital - fee_beli
+        amount_coin_got = net_capital_bought / price_entry
+        
+        gross_sell_tp = amount_coin_got * price_tp
+        fee_jual_tp = gross_sell_tp * fee_rate
+        net_sell_tp = gross_sell_tp - fee_jual_tp
+        net_profit_idr = net_sell_tp - allocated_capital
 
-    gross_sell_sl = amount_coin_got * price_sl
-    fee_jual_sl = gross_sell_sl * fee_rate
-    net_sell_sl = gross_sell_sl - fee_jual_sl
-    net_loss_idr = allocated_capital - net_sell_sl
+        gross_sell_sl = amount_coin_got * price_sl
+        fee_jual_sl = gross_sell_sl * fee_rate
+        net_sell_sl = gross_sell_sl - fee_jual_sl
+        net_loss_idr = allocated_capital - net_sell_sl
 
-    # OUTPUT PRESENTASI KALKULATOR
-    st.markdown("---")
-    st.subheader("📋 Lembar Panduan Rencana Eksekusi (Trading Plan)")
-    
-    o1, o2, o3 = st.columns(3)
-    o1.metric("Rekomendasi Modal Masuk", f"Rp {allocated_capital:,.0f}", f"Maksimal Risiko: Rp {max_risk_idr:,.0f}")
-    o2.metric("Estimasi Bersih Jika TP1", f"Rp {net_sell_tp:,.0f}", f"+ Rp {net_profit_idr:,.0f} (Bersih Fee)", delta_color="normal")
-    o3.metric("Estimasi Bersih Jika SL", f"Rp {net_sell_sl:,.0f}", f"- Rp {net_loss_idr:,.0f} (Bersih Fee)", delta_color="inverse")
+        st.markdown("---")
+        st.subheader("📋 Lembar Panduan Rencana Eksekusi (Trading Plan)")
+        
+        o1, o2, o3 = st.columns(3)
+        o1.metric("Rekomendasi Modal Masuk", f"Rp {allocated_capital:,.0f}", f"Maksimal Risiko: Rp {max_risk_idr:,.0f}")
+        o2.metric("Estimasi Bersih Jika TP1", f"Rp {net_sell_tp:,.0f}", f"+ Rp {net_profit_idr:,.0f} (Bersih Fee)", delta_color="normal")
+        o3.metric("Estimasi Bersih Jika SL", f"Rp {net_sell_sl:,.0f}", f"- Rp {net_loss_idr:,.0f} (Bersih Fee)", delta_color="inverse")
 
-    st.markdown("#### 🔍 Rincian Potongan Biaya Transaksi Bursa (Fee Audit)")
-    fee_df = pd.DataFrame({
-        "Komponen Transaksi": ["Modal Kotor yang Dibelanjakan", f"Potongan Fee Beli Indodax ({fee_rate*100:.2f}%)", "Modal Bersih Berbentuk Aset", "Jumlah Unit Koin yang Didapat", "Estimasi Biaya Fee Saat Jual"],
-        "Nilai Perhitungan": [f"Rp {allocated_capital:,.2f}", f"Rp {fee_beli:,.2f}", f"Rp {net_capital_bought:,.2f}", f"{amount_coin_got:.6f} {selected_coin_k}", f"Rp {fee_jual_tp:,.2f} (Saat TP) / Rp {fee_jual_sl:,.2f} (Saat SL)"]
-    })
-    st.table(fee_df)
+        st.markdown("#### 🔍 Rincian Potongan Biaya Transaksi Bursa (Fee Audit)")
+        fee_df = pd.DataFrame({
+            "Komponen Transaksi": ["Modal Kotor yang Dibelanjakan", f"Potongan Fee Beli Indodax ({fee_rate*100:.2f}%)", "Modal Bersih Berbentuk Aset", "Jumlah Unit Koin yang Didapat", "Estimasi Biaya Fee Saat Jual"],
+            "Nilai Perhitungan": [f"Rp {allocated_capital:,.2f}", f"Rp {fee_beli:,.2f}", f"Rp {net_capital_bought:,.2f}", f"{amount_coin_got:.6f} {selected_coin_k}", f"Rp {fee_jual_tp:,.2f} (Saat TP) / Rp {fee_jual_sl:,.2f} (Saat SL)"]
+        })
+        st.table(fee_df)
+    else:
+        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu di sidebar.")
 
 # --- MODUL 3: BACKTESTING ENGINE ---
 elif menu_nav == "📈 ALGORITHMIC BACKTESTING":
     st.title("📈 BACKTESTING ENGINE SIMULATOR")
-    backtest_coin = st.selectbox("Pilih Koin Pengujian:", st.session_state.watchlist)
-    days = st.slider("Rentang Waktu Analisis (Hari):", 7, 90, 30)
-    
-    bc1, bc2 = st.columns(2)
-    bc1.metric("Win Rate (%)", f"{random.randint(65, 78)}%", "Optimal")
-    bc2.metric("Profit Factor", f"{round(random.uniform(1.8, 2.5), 2)}x", "Bullish Edge")
-    
-    equity_curve = np.cumsum(np.random.normal(0.5, 1.5, days)) + 100
-    st.line_chart(equity_curve)
+    if not df_watchlist.empty:
+        backtest_coin = st.selectbox("Pilih Koin Pengujian:", st.session_state.watchlist)
+        days = st.slider("Rentang Waktu Analisis (Hari):", 7, 90, 30)
+        
+        bc1, bc2 = st.columns(2)
+        bc1.metric("Win Rate (%)", f"{random.randint(65, 78)}%", "Optimal")
+        bc2.metric("Profit Factor", f"{round(random.uniform(1.8, 2.5), 2)}x", "Bullish Edge")
+        
+        equity_curve = np.cumsum(np.random.normal(0.5, 1.5, days)) + 100
+        st.line_chart(equity_curve)
+    else:
+        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu di sidebar.")
 
 # --- MODUL 4: PANDUAN MANAJEMEN RISIKO ---
 elif menu_nav == "📚 PANDUAN MANAJEMEN RISIKO":
@@ -248,7 +270,8 @@ elif menu_nav == "📚 PANDUAN MANAJEMEN RISIKO":
     st.markdown("""
     ### Aturan Emas Menggunakan Kalkulator Modal:
     1. **Disiplin Saldo:** Jangan pernah menaruh modal melebihi angka 'Rekomendasi Modal Masuk' yang dihitung kalkulator, karena angka tersebut dibuat agar saldo Anda tidak habis jika market mendadak crash.
-    2. **Perbedaan Maker vs Taker:** * **Taker Order** artinya Anda membeli langsung di harga pasar saat itu juga (Instant Buy). Praktis, tapi pajaknya lebih besar.
+    2. **Perbedaan Maker vs Taker:** 
+       * **Taker Order** artinya Anda membeli langsung di harga pasar saat itu juga (Instant Buy). Praktis, tapi pajaknya lebih besar.
        * **Maker Order** artinya Anda mengantre harga di bawah pasar menggunakan Limit Order. Lebih murah, tapi harus sabar menunggu antrean tersentuh.
     """)
 
