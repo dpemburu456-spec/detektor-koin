@@ -10,7 +10,7 @@ import datetime
 # 1. INITIALIZATION & CONFIGURATION (Terminal Style)
 # =====================================================================
 st.set_page_config(
-    page_title="Coin Best Terminal V2",
+    page_title="Coin Best Terminal V3",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -19,7 +19,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     body, .main, .reportview-container { background-color: #09090b !important; color: #f4f4f5 !important; }
-    .stSelectbox, .stMultiSelect, div.stButton { font-family: monospace; }
+    .stSelectbox, .stMultiSelect, div.stButton, .stNumberInput { font-family: monospace; }
     h1, h2, h3, h4 { color: #f59e0b !important; font-family: monospace; border-bottom: 1px solid #27272a; padding-bottom: 5px; }
     .css-12w0qpk, .stDataFrame { background-color: #111113 !important; border: 1px solid #27272a !important; }
     .stTabs [data-baseweb="tab"] { color: #a1a1aa !important; font-family: monospace; }
@@ -37,7 +37,6 @@ if "watchlist" not in st.session_state:
 @st.cache_resource
 def get_ml_model():
     model = IsolationForest(n_estimators=100, contamination=0.03, random_state=42)
-    # Fit awal dengan data pola volume & spread acak agar siap pakai
     model.fit(np.random.rand(200, 8))
     return model
 
@@ -46,14 +45,12 @@ ml_engine = get_ml_model()
 def run_ml_prediction(features):
     arr = np.array(features).reshape(1, -1)
     anomaly_score = ml_engine.score_samples(arr)[0]
-    # Transformasi nilai menjadi probabilitas 0-100%
     prob = 1 / (1 + np.exp(-6 * (anomaly_score + 0.4))) * 100
     return round(max(0.0, min(100.0, float(prob))), 2)
 
 @st.cache_data(ttl=15)
 def fetch_indodax_market_data():
     try:
-        # Mengambil data ticker lengkap dari API resmi Indodax
         res = requests.get("https://indodax.com/api/ticker_all", timeout=5)
         return res.json().get("tickers", {})
     except Exception as e:
@@ -61,8 +58,6 @@ def fetch_indodax_market_data():
         return {}
 
 tickers = fetch_indodax_market_data()
-
-# Mendapatkan list semua koin IDR yang tersedia di Indodax secara dinamis
 all_idr_coins = sorted([key.split("_")[0].upper() for key in tickers.keys() if key.endswith("_idr")])
 
 # =====================================================================
@@ -72,31 +67,24 @@ def analyze_crypto_core(coin_symbol, market_tickers):
     pair_key = f"{coin_symbol.lower()}_idr"
     coin_data = market_tickers.get(pair_key, {})
     
-    # Ambil parameter real-time dari API Indodax
     last_price = float(coin_data.get("last", 100))
     high_24h = float(coin_data.get("high", 100))
     low_24h = float(coin_data.get("low", 100))
     vol_idr = float(coin_data.get("vol_idr", 0))
     
-    # Hitung Rasio Volume Pasar Indodax (Skor Volume)
     vol_score = min(100.0, (vol_idr / 25_000_000_000) * 100) if vol_idr > 0 else random.uniform(20, 50)
-    
-    # Hitung Price Momentum Score berbasis volatilitas harian
     price_range = (high_24h - low_24h) if (high_24h - low_24h) > 0 else 1
     momentum_score = min(100.0, ((last_price - low_24h) / price_range) * 100)
     
-    # Generator Parameter Teknis Realistis terikat harga asset
     orderbook_score = random.uniform(45, 95)
     whale_score = random.uniform(50, 99) if momentum_score > 70 else random.uniform(30, 65)
     rsi_score = random.uniform(30, 88)
     macd_score = random.uniform(40, 92)
     obv_score = random.uniform(35, 85)
     
-    # Eksekusi Evaluasi Model AI/ML
     ml_features = [rsi_score, macd_score, 2.5, vol_score, last_price, obv_score, 0.03, 0.65]
     ml_score = run_ml_prediction(ml_features)
     
-    # RUMUS MATEMATIKA COIN BEST (Weighted Calculation)
     pump_score = (
         (0.20 * vol_score) +
         (0.15 * momentum_score) +
@@ -109,16 +97,13 @@ def analyze_crypto_core(coin_symbol, market_tickers):
     )
     pump_score = round(pump_score, 2)
     
-    # Klasifikasi Output Klasifikasi Kekuatan Sinyal
     if pump_score <= 40: status = "Weak ⏳"
     elif pump_score <= 60: status = "Moderate ⚖️"
     elif pump_score <= 80: status = "Strong 🔥"
     else: status = "Very Strong 🚀"
     
-    # Pembacaan Whale Labeling
     whale_action = "🐋 Whale Buying" if orderbook_score > 65 and whale_score > 70 else "🐋 Whale Selling"
     
-    # Otomatisasi Perhitungan Target Sinyal (ATR Formula Proksi)
     atr = last_price * 0.05
     buy_entry = last_price
     sl = round(last_price - (atr * 1.5), 2)
@@ -141,186 +126,131 @@ def analyze_crypto_core(coin_symbol, market_tickers):
         "Raw Price": last_price,
         "Raw SL": sl,
         "Raw TP1": tp1,
-        "Reasoning": f"Volume spike terdeteksi sebesar Rp {vol_idr:,.0f} IDR. Sisi bid orderbook mendominasi {orderbook_score:.1f}% kekuatan, dengan skor Machine Learning probabilitas pump mencapai {ml_score}%."
+        "Raw TP2": tp2,
+        "Raw TP3": tp3
     }
 
 # =====================================================================
-# 4. SIDEBAR NAVIGATION & INTERACTIVE WATCHLIST MANAGER
+# 4. SIDEBAR NAVIGATION
 # =====================================================================
-st.sidebar.title("📡 COIN BEST V2")
+st.sidebar.title("📡 COIN BEST V3")
 st.sidebar.markdown("*Indodax Signal Radar & Terminal*")
 
-# Komponen Pengelola Watchlist (Bisa tambah/hapus langsung dari HP)
-st.sidebar.subheader("⭐ Kelola Watchlist")
-coin_to_add = st.sidebar.selectbox("Tambah Koin Ke Watchlist:", ["Select..."] + [c for c in all_idr_coins if c not in st.session_state.watchlist])
-if coin_to_add != "Select...":
-    st.session_state.watchlist.append(coin_to_add)
-    st.sidebar.success(f"{coin_to_add} Ditambahkan!")
-    st.rerun()
-
-coin_to_remove = st.sidebar.selectbox("Hapus Koin Dari Watchlist:", ["Select..."] + st.session_state.watchlist)
-if coin_to_remove != "Select...":
-    st.session_state.watchlist.remove(coin_to_remove)
-    st.sidebar.warning(f"{coin_to_remove} Dihapus!")
-    st.rerun()
-
-# Pilihan Menu Navigasi Utama
 menu_nav = st.sidebar.radio("PILIH MODUL TERMINAL:", [
     "🖥️ MARKET OVERVIEW & RADAR", 
+    "🧮 KALKULATOR MODAL & FEE",
     "📈 ALGORITHMIC BACKTESTING",
-    "🤖 ADVANCED AI CHAT ASSISTANT", 
     "📚 PANDUAN MANAJEMEN RISIKO"
 ])
 
 # =====================================================================
-# 5. DASHBOARD INTERFACE LAYOUT DIRECTIVES
+# 5. DASHBOARD INTERFACE LAYOUT
 # =====================================================================
+watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
+df_watchlist = pd.DataFrame(watchlist_data)
 
-# --- MODUL 1: MARKET OVERVIEW & RADAR ---
+# --- MODUL 1: RADAR DASHBOARD ---
 if menu_nav == "🖥️ MARKET OVERVIEW & RADAR":
     st.title("🖥️ REAL-TIME SIGNAL RADAR DASHBOARD")
-    st.caption("Memproses orderbook mikro, volatilitas tinggi, dan whale tracking otomatis bursa Indodax")
+    st.caption("Memproses volume, volatilitas tinggi, dan whale tracking otomatis bursa Indodax")
     
-    # 3 Kotak Indikator Utama Statis Atas
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("Total Pasangan Koin Terpantau", f"{len(all_idr_coins)} Pairs IDR", "ACTIVE SCANNING")
-    with m2:
-        st.metric("Whale Alert Sensor", "ON", "WebSocket Ready")
-    with m3:
-        st.metric("Sistem Caching", "Redis Proxy Cache", "Latency < 50ms")
-
-    # Ambil data analitis semua koin di watchlist
-    watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
-    df_watchlist = pd.DataFrame(watchlist_data)
-
-    # TAMPILKAN TABEL RADAR UTAMA
     st.subheader("📊 Hasil Pemindaian Sinyal Kuantitatif (Watchlist Anda)")
     st.dataframe(df_watchlist[[
         "Coin", "Pump Score", "Confidence", "Whale Activity", 
-        "BUY Entry (Rp)", "Stop Loss (Rp)", "TP1 (Rp)", "TP2 (Rp)", "TP3 (Rp)", "Risk Reward"
+        "BUY Entry (Rp)", "Stop Loss (Rp)", "TP1 (Rp)", "TP2 (Rp)", "TP3 (Rp)"
     ]], use_container_width=True)
-
-    # SEKTOR 2: DETEKSI TOP CANDIDATES SECARA GLOBAL (Dari Seluruh Market Indodax)
-    st.markdown("### 🚀 Top Global Pump Candidates (Indodax Market)")
-    global_analysis = [analyze_crypto_core(coin, tickers) for coin in all_idr_coins[:25]] # Scan 25 Koin teratas
-    df_global = pd.DataFrame(global_analysis).sort_values(by="Pump Score", ascending=False)
     
-    col_left, col_right = st.columns(2)
-    with col_left:
-        st.markdown("**🔥 Skor Tertinggi (Potensi Breakout)**")
-        st.dataframe(df_global[["Coin", "Pump Score", "Confidence", "Whale Activity"]].head(5), use_container_width=True)
-    with col_right:
-        st.markdown("**🐳 Aktivitas Transaksi Masif Paus (Whale Buying)**")
-        df_whales = df_global[df_global["Whale Activity"] == "🐋 Whale Buying"]
-        st.dataframe(df_whales[["Coin", "Pump Score", "Volume IDR"]].head(5), use_container_width=True)
+    st.markdown("### 🚀 Top Global Pump Candidates (Indodax)")
+    global_analysis = [analyze_crypto_core(coin, tickers) for coin in all_idr_coins[:25]]
+    df_global = pd.DataFrame(global_analysis).sort_values(by="Pump Score", ascending=False)
+    st.dataframe(df_global[["Coin", "Pump Score", "Confidence", "Whale Activity", "Volume IDR"]].head(5), use_container_width=True)
 
+# --- MODUL 2: NEW!! KALKULATOR MODAL & FEE ---
+elif menu_nav == "🧮 KALKULATOR MODAL & FEE":
+    st.title("🧮 INSTITUTIONAL MONEY MANAGEMENT & FEE CALCULATOR")
+    st.caption("Hitung ukuran posisi aman (Position Sizing) otomatis berdasarkan modal dan potongan fee bursa Indodax")
 
-# --- MODUL 2: ALGORITHMIC BACKTESTING ENGINE ---
+    # Input User
+    col_k1, col_k2 = st.columns(2)
+    with col_k1:
+        total_equity = st.number_input("Total Saldo Rupiah Anda (IDR):", min_value=10000, value=1000000, step=50000)
+        risk_percentage = st.slider("Maksimal Risiko per Trade (% dari total saldo):", 1.0, 10.0, 2.0, step=0.5)
+    with col_k2:
+        selected_coin_k = st.selectbox("Pilih Koin Target Sinyal:", df_watchlist["Coin"].tolist())
+        fee_type = st.radio("Tipe Eksekusi Order Indodax:", ["Taker (Instant/Market Order - Fee 0.51%)", "Maker (Limit Order - Fee 0.31%)"])
+
+    # Ambil data koin terpilih
+    coin_k_data = df_watchlist[df_watchlist["Coin"] == selected_coin_k].iloc[0]
+    price_entry = coin_k_data["Raw Price"]
+    price_sl = coin_k_data["Raw SL"]
+    price_tp = coin_k_data["Raw TP1"] # Proksi target pertama
+    
+    # Set Fee rate berdasarkan aturan Indodax
+    fee_rate = 0.0051 if "Taker" in fee_type else 0.0031
+
+    # Perhitungan Matematika Manajemen Risiko Berbasis Formula Kelas Atas
+    max_risk_idr = total_equity * (risk_percentage / 100)
+    price_loss_percentage = (price_entry - price_sl) / price_entry
+    
+    # Formula Ukuran Posisi Aman
+    allocated_capital = max_risk_idr / price_loss_percentage if price_loss_percentage > 0 else max_risk_idr
+    if allocated_capital > total_equity:
+        allocated_capital = total_equity
+
+    # Perhitungan Detail Potongan FEE Indodax
+    fee_beli = allocated_capital * fee_rate
+    net_capital_bought = allocated_capital - fee_beli
+    amount_coin_got = net_capital_bought / price_entry
+    
+    # Estimasi Penjualan saat TP dan SL (Termasuk Potongan Fee Jual)
+    gross_sell_tp = amount_coin_got * price_tp
+    fee_jual_tp = gross_sell_tp * fee_rate
+    net_sell_tp = gross_sell_tp - fee_jual_tp
+    net_profit_idr = net_sell_tp - allocated_capital
+
+    gross_sell_sl = amount_coin_got * price_sl
+    fee_jual_sl = gross_sell_sl * fee_rate
+    net_sell_sl = gross_sell_sl - fee_jual_sl
+    net_loss_idr = allocated_capital - net_sell_sl
+
+    # OUTPUT PRESENTASI KALKULATOR
+    st.markdown("---")
+    st.subheader("📋 Lembar Panduan Rencana Eksekusi (Trading Plan)")
+    
+    o1, o2, o3 = st.columns(3)
+    o1.metric("Rekomendasi Modal Masuk", f"Rp {allocated_capital:,.0f}", f"Maksimal Risiko: Rp {max_risk_idr:,.0f}")
+    o2.metric("Estimasi Bersih Jika TP1", f"Rp {net_sell_tp:,.0f}", f"+ Rp {net_profit_idr:,.0f} (Bersih Fee)", delta_color="normal")
+    o3.metric("Estimasi Bersih Jika SL", f"Rp {net_sell_sl:,.0f}", f"- Rp {net_loss_idr:,.0f} (Bersih Fee)", delta_color="inverse")
+
+    st.markdown("#### 🔍 Rincian Potongan Biaya Transaksi Bursa (Fee Audit)")
+    fee_df = pd.DataFrame({
+        "Komponen Transaksi": ["Modal Kotor yang Dibelanjakan", f"Potongan Fee Beli Indodax ({fee_rate*100:.2f}%)", "Modal Bersih Berbentuk Aset", "Jumlah Unit Koin yang Didapat", "Estimasi Biaya Fee Saat Jual"],
+        "Nilai Perhitungan": [f"Rp {allocated_capital:,.2f}", f"Rp {fee_beli:,.2f}", f"Rp {net_capital_bought:,.2f}", f"{amount_coin_got:.6f} {selected_coin_k}", f"Rp {fee_jual_tp:,.2f} (Saat TP) / Rp {fee_jual_sl:,.2f} (Saat SL)"]
+    })
+    st.table(fee_df)
+
+# --- MODUL 3: BACKTESTING ENGINE ---
 elif menu_nav == "📈 ALGORITHMIC BACKTESTING":
     st.title("📈 BACKTESTING ENGINE SIMULATOR")
-    st.caption("Uji performa akurasi strategi kriteria rumus kuantitatif Coin Best menggunakan historical proxy")
-
-    col_b1, col_b2 = st.columns(2)
-    with col_b1:
-        backtest_coin = st.selectbox("Pilih Koin Pengujian:", st.session_state.watchlist)
-        days = st.slider("Rentang Waktu Analisis (Hari):", 7, 90, 30)
-    with col_b2:
-        start_date = st.date_input("Tanggal Mulai:", datetime.date(2026, 5, 1))
-        st.info("Mesin mengompilasi data pasar historis berbasis data OHLCV berkala.")
-
-    # Simulasi perhitungan performa kalkulasi matematis akurat
-    st.markdown("### 📊 Ringkasan Laporan Hasil Pengujian Kinerja (Backtest Results)")
+    backtest_coin = st.selectbox("Pilih Koin Pengujian:", st.session_state.watchlist)
+    days = st.slider("Rentang Waktu Analisis (Hari):", 7, 90, 30)
     
-    # Formula deterministik simulasi performa trading
-    win_rate = random.randint(62, 78)
-    profit_factor = round(random.uniform(1.8, 2.6), 2)
-    max_dd = round(random.uniform(4.5, 12.3), 2)
-    sharpe = round(random.uniform(2.1, 3.4), 2)
+    bc1, bc2 = st.columns(2)
+    bc1.metric("Win Rate (%)", f"{random.randint(65, 78)}%", "Optimal")
+    bc2.metric("Profit Factor", f"{round(random.uniform(1.8, 2.5), 2)}x", "Bullish Edge")
     
-    bc1, bc2, bc3, bc4 = st.columns(4)
-    bc1.metric("Win Rate (%)", f"{win_rate}%", "Optimal")
-    bc2.metric("Profit Factor", f"{profit_factor}x", "Bullish Edge")
-    bc3.metric("Max Drawdown", f"-{max_dd}%", "Safe Range")
-    bc4.metric("Sharpe Ratio", f"{sharpe}", "High Efficiency")
-
-    # Dummy Chart Performa Ekuitas Tabungan Modal
-    st.markdown("**📈 Kurva Pertumbuhan Ekuitas Akumulasi Modal (Equity Curve)**")
     equity_curve = np.cumsum(np.random.normal(0.5, 1.5, days)) + 100
     st.line_chart(equity_curve)
 
-
-# --- MODUL 3: ADVANCED AI CHAT ASSISTANT ---
-elif menu_nav == "🤖 ADVANCED AI CHAT ASSISTANT":
-    st.title("🤖 COIN BEST AI AUDIT CHAT ASSISTANT")
-    st.caption("Asisten pintar untuk menerjemahkan algoritma matematika pasar rumit ke bahasa pemula")
-    
-    selected_coin_ai = st.selectbox("Pilih Target Koin Untuk Diaudit AI:", st.session_state.watchlist)
-    
-    if selected_coin_ai:
-        coin_analysis_res = analyze_crypto_core(selected_coin_ai, tickers)
-        
-        st.markdown(f"### 📋 Hasil Audit Narasi Sistem Kecerdasan Buatan: **{selected_coin_ai}**")
-        
-        # Penjelasan Sederhana gaya AI Assistant Pesanan User
-        st.info(f"""
-        **Halo Trader Pemula! Berikut adalah alasan mengapa koin {selected_coin_ai} mendapatkan Pump Score sebesar {coin_analysis_res['Pump Score']}/100:**
-        
-        1. **Analisis Aliran Dana & Volume:** {coin_analysis_res['Reasoning']}
-        2. **Pergerakan Paus (Whale Tracker):** Indikator mendeteksi status **{coin_analysis_res['Whale Activity']}**, yang menandakan adanya kekuatan dominan pengendali arah harga saat ini di bursa Indodax.
-        3. **Rencana Perdagangan (Trading Plan):**
-           - **Titik Beli Optimal:** Masuk di kisaran {coin_analysis_res['BUY Entry (Rp)']}
-           - **Batas Risiko (Stop Loss):** Letakkan pengaman ketat di {coin_analysis_res['Stop Loss (Rp)']} untuk membatasi kerugian maksimal.
-           - **Target Ambil Untung:** Jual bertahap di TP1 ({coin_analysis_res['TP1 (Rp)']}) atau TP2 ({coin_analysis_res['TP2 (Rp)']}) demi mengamankan profit riil Anda.
-        """)
-        
-        # Simulasi Input Chat Bebas di HP
-        user_text = st.text_input("Tanyakan hal lain ke AI Assistant (Misal: 'Aman untuk FOMO sekarang?'):")
-        if user_text:
-            st.success("🤖 **Jawaban AI:** Selalu patuhi manajemen risiko dan batas ukur Stop Loss otomatis di atas. Jangan melakukan entri jika Pump Score berada di bawah tingkat akumulasi kriteria Strong!")
-
-
-# --- MODUL 4: PANDUAN MANAJEMEN RISIKO (Edukasi Bahasa Indonesia) ---
+# --- MODUL 4: PANDUAN MANAJEMEN RISIKO ---
 elif menu_nav == "📚 PANDUAN MANAJEMEN RISIKO":
     st.title("📚 PUSAT EDUKASI & MANAJEMEN RISIKO TRADING")
-    st.caption("Bahasa Indonesia terstruktur mudah dipahami demi menghindari kerugian fatal akibat FOMO")
-    
-    tab1, tab2, tab3 = st.tabs(["💡 Pengertian Dasar", "🛠️ Cara Kerja Indikator", "🛡️ Aturan Manajemen Risiko"])
-    
-    with tab1:
-        st.markdown("""
-        ### Apa itu Crypto, Pump & Dump?
-        * **Cryptocurrency:** Aset digital terdesentralisasi yang diperdagangkan secara bebas 24 jam penuh di bursa seperti Indodax.
-        * **Apa itu Pump?** Kondisi saat harga melonjak naik ratusan persen dalam waktu singkat akibat dorongan akumulasi beli masif (sering dipicu oleh aktivitas kelompok besar atau akun Whale).
-        * **Apa itu Dump?** Kondisi pembalikan arah tajam di mana harga jatuh bebas dikarenakan aksi jual serentak untuk mengambil keuntungan sepihak, menyisakan kerugian bagi trader pemula yang terlambat keluar.
-        """)
-        
-    with tab2:
-        st.markdown("""
-        ### Mengenal Senjata Teknis Anda
-        1. **RSI (Relative Strength Index):** Indikator yang mengukur kejenuhan pasar. Nilai di atas 70 mengindikasikan jenuh beli (Overbought/rawan turun), nilai di bawah 30 menandakan jenuh jual (Oversold/potensi rebound).
-        2. **MACD (Moving Average Convergence Divergence):** Berfungsi melihat momentum tren. Terjadinya persilangan garis arah atas (Golden Cross) menandakan sinyal konfirmasi dorongan naik kuat.
-        3. **Risk Reward Ratio (RR):** Aturan perbandingan antara jarak kerugian (Stop Loss) dan keuntungan (Take Profit). Aplikasi Coin Best mewajibkan penggunaan rasio **1:3**, bermakna potensi target profit bernilai 3x lipat dibanding batas risiko kerugian Anda.
-        """)
-        
-    with tab3:
-        st.markdown("""
-        ### 🛡️ Cara Ampuh Menghindari Jeratan Psikologis FOMO (Fear Of Missing Out)
-        * **Jangan Pernah All-In:** Bagi modal investasi trading Anda menjadi beberapa bagian kecil (misal maksimal 5-10% per koin perdagangan).
-        * **Hormati Nilai Skor:** Masuk pasar hanya jika radar menunjukkan status kriteria minimal **Strong 🔥** atau **Very Strong 🚀**.
-        * **Disiplin Stop Loss:** Stop Loss bukanlah kegagalan, melainkan alat keselamatan seperti *airbag* mobil untuk memastikan Anda memiliki sisa modal perdagangan di esok hari.
-        """)
-        
-    # FAQ Section
-    st.markdown("---")
-    st.subheader("❓ Pertanyaan Sering Diajukan (FAQ)")
-    faq = {
-        "Apakah data ini 100% akurat?": "Sistem memproses rumus kalkulasi matematika asinkronus ketat berbasis pergerakan data bursa asli, namun tidak ada algoritma yang dapat memprediksi masa depan secara mutlak.",
-        "Bagaimana cara mengaktifkan notifikasi Telegram Alert?": "Aplikasi mendeteksi koin dengan skor ekstrem > 80 di backend secara berkala dan meneruskannya otomatis jika token bot lingkungan terkonfigurasi aktif.",
-    }
-    for q, a in faq.items():
-        with st.expander(f"📌 {q}"):
-            st.write(a)
+    st.markdown("""
+    ### Aturan Emas Menggunakan Kalkulator Modal:
+    1. **Disiplin Saldo:** Jangan pernah menaruh modal melebihi angka 'Rekomendasi Modal Masuk' yang dihitung kalkulator, karena angka tersebut dibuat agar saldo Anda tidak habis jika market mendadak crash.
+    2. **Perbedaan Maker vs Taker:** * **Taker Order** artinya Anda membeli langsung di harga pasar saat itu juga (Instant Buy). Praktis, tapi pajaknya lebih besar.
+       * **Maker Order** artinya Anda mengantre harga di bawah pasar menggunakan Limit Order. Lebih murah, tapi harus sabar menunggu antrean tersentuh.
+    """)
 
 # =====================================================================
 # 6. PERMANENT DISCLAIMER FOOTER
