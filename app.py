@@ -5,12 +5,13 @@ import numpy as np
 import random
 from sklearn.ensemble import IsolationForest
 import datetime
+from streamlit.components.v1 import html
 
 # =====================================================================
 # 1. INITIALIZATION & CONFIGURATION (Terminal Style)
 # =====================================================================
 st.set_page_config(
-    page_title="Coin Best Terminal V3.1",
+    page_title="Coin Best Terminal V3.2",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -27,9 +28,29 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Inisialisasi Session State untuk Watchlist jika belum ada
+# --- TRICK LOCAL STORAGE UNTUK MEMORI PERMANEN DI HP ---
+# Mengambil data watchlist dari LocalStorage Browser melalui JavaScript
+st.markdown("""
+    <script>
+        const savedWatchlist = localStorage.getItem('coin_best_watchlist');
+        if (savedWatchlist) {
+            window.parent.postMessage({type: 'streamlit:set_component_value', value: JSON.parse(savedWatchlist)}, '*');
+        }
+    </script>
+""", unsafe_allow_html=True)
+
+# Inisialisasi awal default jika kosong
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = ["BTC", "ETH", "SOL", "ADA", "DOGE"]
+
+# Fungsi sinkronisasi untuk mengunci data ke memori HP
+def save_watchlist_to_device(current_list):
+    list_str = str(current_list).replace("'", '"')
+    html(f"""
+        <script>
+            localStorage.setItem('coin_best_watchlist', '{list_str}');
+        </script>
+    """, height=0)
 
 # =====================================================================
 # 2. ADVANCED DATA & ML ENGINE
@@ -131,22 +152,23 @@ def analyze_crypto_core(coin_symbol, market_tickers):
     }
 
 # =====================================================================
-# 4. SIDEBAR NAVIGATION & WATCHLIST MANAGER (Balik & Diperbaiki)
+# 4. SIDEBAR NAVIGATION & WATCHLIST MANAGER
 # =====================================================================
-st.sidebar.title("📡 COIN BEST V3.1")
+st.sidebar.title("📡 COIN BEST V3.2")
 st.sidebar.markdown("*Indodax Signal Radar & Terminal*")
 
-# Komponen Pengelola Watchlist (Sekarang permanen di sidebar)
 st.sidebar.subheader("⭐ Kelola Watchlist")
 coin_to_add = st.sidebar.selectbox("Tambah Koin Ke Watchlist:", ["Select..."] + [c for c in all_idr_coins if c not in st.session_state.watchlist])
 if coin_to_add != "Select...":
     st.session_state.watchlist.append(coin_to_add)
+    save_watchlist_to_device(st.session_state.watchlist) # Kunci ke memori HP
     st.sidebar.success(f"{coin_to_add} Ditambahkan!")
     st.rerun()
 
 coin_to_remove = st.sidebar.selectbox("Hapus Koin Dari Watchlist:", ["Select..."] + st.session_state.watchlist)
 if coin_to_remove != "Select...":
     st.session_state.watchlist.remove(coin_to_remove)
+    save_watchlist_to_device(st.session_state.watchlist) # Kunci ke memori HP
     st.sidebar.warning(f"{coin_to_remove} Dihapus!")
     st.rerun()
 
@@ -162,7 +184,6 @@ menu_nav = st.sidebar.radio("PILIH MODUL TERMINAL:", [
 # =====================================================================
 # 5. DASHBOARD INTERFACE LAYOUT
 # =====================================================================
-# Amankan proses data agar tidak error jika watchlist kosong
 if len(st.session_state.watchlist) > 0:
     watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
     df_watchlist = pd.DataFrame(watchlist_data)
@@ -202,7 +223,6 @@ elif menu_nav == "🧮 KALKULATOR MODAL & FEE":
             selected_coin_k = st.selectbox("Pilih Koin Target Sinyal:", df_watchlist["Coin"].tolist())
             fee_type = st.radio("Tipe Eksekusi Order Indodax:", ["Taker (Instant/Market Order - Fee 0.51%)", "Maker (Limit Order - Fee 0.31%)"])
 
-        # Perhitungan data posisi
         coin_k_data = df_watchlist[df_watchlist["Coin"] == selected_coin_k].iloc[0]
         price_entry = coin_k_data["Raw Price"]
         price_sl = coin_k_data["Raw SL"]
@@ -269,14 +289,14 @@ elif menu_nav == "📚 PANDUAN MANAJEMEN RISIKO":
     st.title("📚 PUSAT EDUKASI & MANAJEMEN RISIKO TRADING")
     st.markdown("""
     ### Aturan Emas Menggunakan Kalkulator Modal:
-    1. **Disiplin Saldo:** Jangan pernah menaruh modal melebihi angka 'Rekomendasi Modal Masuk' yang dihitung kalkulator, karena angka tersebut dibuat agar saldo Anda tidak habis jika market mendadak crash.
+    1. **Disiplin Saldo:** Jangan pernah menaruh modal melebihi angka 'Rekomendasi Modal Masuk' yang dihitung kalkulator.
     2. **Perbedaan Maker vs Taker:** 
-       * **Taker Order** artinya Anda membeli langsung di harga pasar saat itu juga (Instant Buy). Praktis, tapi pajaknya lebih besar.
-       * **Maker Order** artinya Anda mengantre harga di bawah pasar menggunakan Limit Order. Lebih murah, tapi harus sabar menunggu antrean tersentuh.
+       * **Taker Order:** Instant Buy (Fee Lebih Tinggi).
+       * **Maker Order:** Antre/Limit Order (Fee Lebih Murah).
     """)
 
 # =====================================================================
 # 6. PERMANENT DISCLAIMER FOOTER
 # =====================================================================
 st.markdown("---")
-st.warning("⚠️ **DISCLAIMER:** COIN BEST bukan penasihat investasi resmi. Perdagangan aset cryptocurrency memiliki tingkat risiko fluktuasi modal yang sangat tinggi. Seluruh keputusan penempatan order transaksi mutlak menjadi tanggung jawab pribadi pengguna.")
+st.warning("⚠️ **DISCLAIMER:** COIN BEST bukan penasihat investasi resmi. Keputusan penempatan order transaksi mutlak menjadi tanggung jawab pribadi pengguna.")
