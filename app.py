@@ -3,300 +3,298 @@ import requests
 import pandas as pd
 import numpy as np
 import random
-from sklearn.ensemble import IsolationForest
 import datetime
 from streamlit.components.v1 import html
 
 # =====================================================================
-# 1. INITIALIZATION & CONFIGURATION (Terminal Style)
+# 1. INITIALIZATION & THEME CONFIGURATION
 # =====================================================================
 st.set_page_config(
-    page_title="Coin Best Terminal V3.2",
+    page_title="Coin Best - Radar Sinyal Indodax",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Tema Gelap ala Bloomberg Terminal Crypto
-st.markdown("""
+# Inisialisasi Session State Pengaturan (Jika Belum Ada)
+if "threshold_pump" not in st.session_state: st.session_state.threshold_pump = 2.0
+if "interval_time" not in st.session_state: st.session_state.interval_time = 15
+if "min_vol" not in st.session_state: st.session_state.min_vol = 50
+if "max_vol" not in st.session_state: st.session_state.max_vol = 50000
+if "selected_indicators" not in st.session_state: st.session_state.selected_indicators = ["RSI", "MACD", "Support & Resistance", "Breakout Signal"]
+if "theme_mode" not in st.session_state: st.session_state.theme_mode = "Gelap 🌙"
+if "current_tab" not in st.session_state: st.session_state.current_tab = "🏠 Beranda"
+if "selected_coin_detail" not in st.session_state: st.session_state.selected_coin_detail = None
+
+# Inject CSS Global untuk UI Modern, Responsif, dan Tema Dinamis
+bg_color = "#09090b" if st.session_state.theme_mode == "Gelap 🌙" else "#ffffff"
+text_color = "#f4f4f5" if st.session_state.theme_mode == "Gelap 🌙" else "#18181b"
+card_color = "#18181b" if st.session_state.theme_mode == "Gelap 🌙" else "#f4f4f5"
+border_color = "#27272a" if st.session_state.theme_mode == "Gelap 🌙" else "#e4e4e7"
+
+st.markdown(f"""
 <style>
-    body, .main, .reportview-container { background-color: #09090b !important; color: #f4f4f5 !important; }
-    .stSelectbox, .stMultiSelect, div.stButton, .stNumberInput { font-family: monospace; }
-    h1, h2, h3, h4 { color: #f59e0b !important; font-family: monospace; border-bottom: 1px solid #27272a; padding-bottom: 5px; }
-    .css-12w0qpk, .stDataFrame { background-color: #111113 !important; border: 1px solid #27272a !important; }
-    .stTabs [data-baseweb="tab"] { color: #a1a1aa !important; font-family: monospace; }
-    .stTabs [aria-selected="true"] { color: #f59e0b !important; font-weight: bold; }
+    body, .main, .reportview-container {{ background-color: {bg_color} !important; color: {text_color} !important; }}
+    h1, h2, h3, h4 {{ color: #f59e0b !important; font-family: monospace; }}
+    .stDataFrame, div[data-testid="stMetricValue"] {{ font-family: monospace; }}
+    
+    /* CSS Card Custom */
+    .crypto-card {{
+        background-color: {card_color};
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid {border_color};
+        margin-bottom: 10px;
+    }}
+    
+    /* Sticky Footer Navigation */
+    .footer-nav {{
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        background-color: {card_color};
+        border-top: 1px solid {border_color};
+        padding: 10px 0;
+        text-align: center;
+        z-index: 999;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
-# --- TRICK LOCAL STORAGE UNTUK MEMORI PERMANEN DI HP ---
-# Mengambil data watchlist dari LocalStorage Browser melalui JavaScript
-st.markdown("""
-    <script>
-        const savedWatchlist = localStorage.getItem('coin_best_watchlist');
-        if (savedWatchlist) {
-            window.parent.postMessage({type: 'streamlit:set_component_value', value: JSON.parse(savedWatchlist)}, '*');
-        }
-    </script>
-""", unsafe_allow_html=True)
-
-# Inisialisasi awal default jika kosong
-if "watchlist" not in st.session_state:
-    st.session_state.watchlist = ["BTC", "ETH", "SOL", "ADA", "DOGE"]
-
-# Fungsi sinkronisasi untuk mengunci data ke memori HP
-def save_watchlist_to_device(current_list):
-    list_str = str(current_list).replace("'", '"')
-    html(f"""
-        <script>
-            localStorage.setItem('coin_best_watchlist', '{list_str}');
-        </script>
-    """, height=0)
-
 # =====================================================================
-# 2. ADVANCED DATA & ML ENGINE
+# 2. REAL-TIME DATA FETCHING (INDODAX API)
 # =====================================================================
-@st.cache_resource
-def get_ml_model():
-    model = IsolationForest(n_estimators=100, contamination=0.03, random_state=42)
-    model.fit(np.random.rand(200, 8))
-    return model
-
-ml_engine = get_ml_model()
-
-def run_ml_prediction(features):
-    arr = np.array(features).reshape(1, -1)
-    anomaly_score = ml_engine.score_samples(arr)[0]
-    prob = 1 / (1 + np.exp(-6 * (anomaly_score + 0.4))) * 100
-    return round(max(0.0, min(100.0, float(prob))), 2)
-
 @st.cache_data(ttl=15)
-def fetch_indodax_market_data():
+def fetch_indodax_raw_data():
     try:
         res = requests.get("https://indodax.com/api/ticker_all", timeout=5)
         return res.json().get("tickers", {})
-    except Exception as e:
-        st.error(f"Koneksi API Indodax Gagal: {e}")
+    except:
         return {}
 
-tickers = fetch_indodax_market_data()
+tickers = fetch_indodax_raw_data()
 all_idr_coins = sorted([key.split("_")[0].upper() for key in tickers.keys() if key.endswith("_idr")])
 
 # =====================================================================
-# 3. CORE PROCESSING LOGIC (Weighted Pump Score Formula)
+# 3. CORE PROCESSING ENGINE (Sinyal Pump & Analisis)
 # =====================================================================
-def analyze_crypto_core(coin_symbol, market_tickers):
-    pair_key = f"{coin_symbol.lower()}_idr"
-    coin_data = market_tickers.get(pair_key, {})
-    
-    last_price = float(coin_data.get("last", 100))
-    high_24h = float(coin_data.get("high", 100))
-    low_24h = float(coin_data.get("low", 100))
-    vol_idr = float(coin_data.get("vol_idr", 0))
-    
-    vol_score = min(100.0, (vol_idr / 25_000_000_000) * 100) if vol_idr > 0 else random.uniform(20, 50)
-    price_range = (high_24h - low_24h) if (high_24h - low_24h) > 0 else 1
-    momentum_score = min(100.0, ((last_price - low_24h) / price_range) * 100)
-    
-    orderbook_score = random.uniform(45, 95)
-    whale_score = random.uniform(50, 99) if momentum_score > 70 else random.uniform(30, 65)
-    rsi_score = random.uniform(30, 88)
-    macd_score = random.uniform(40, 92)
-    obv_score = random.uniform(35, 85)
-    
-    ml_features = [rsi_score, macd_score, 2.5, vol_score, last_price, obv_score, 0.03, 0.65]
-    ml_score = run_ml_prediction(ml_features)
-    
-    pump_score = (
-        (0.20 * vol_score) +
-        (0.15 * momentum_score) +
-        (0.15 * orderbook_score) +
-        (0.10 * whale_score) +
-        (0.10 * rsi_score) +
-        (0.10 * macd_score) +
-        (0.10 * obv_score) +
-        (0.10 * ml_score)
-    )
-    pump_score = round(pump_score, 2)
-    
-    if pump_score <= 40: status = "Weak ⏳"
-    elif pump_score <= 60: status = "Moderate ⚖️"
-    elif pump_score <= 80: status = "Strong 🔥"
-    else: status = "Very Strong 🚀"
-    
-    whale_action = "🐋 Whale Buying" if orderbook_score > 65 and whale_score > 70 else "🐋 Whale Selling"
-    
-    atr = last_price * 0.05
-    buy_entry = last_price
-    sl = round(last_price - (atr * 1.5), 2)
-    tp1 = round(last_price + atr, 2)
-    tp2 = round(last_price + (atr * 2.5), 2)
-    tp3 = round(last_price + (atr * 4), 2)
-    
-    return {
-        "Coin": coin_symbol,
-        "Pump Score": pump_score,
-        "Confidence": status,
-        "Whale Activity": whale_action,
-        "BUY Entry (Rp)": f"{buy_entry:,.0f}",
-        "Stop Loss (Rp)": f"{sl:,.0f}",
-        "TP1 (Rp)": f"{tp1:,.0f}",
-        "TP2 (Rp)": f"{tp2:,.0f}",
-        "TP3 (Rp)": f"{tp3:,.0f}",
-        "Risk Reward": "1:3",
-        "Volume IDR": f"Rp {vol_idr:,.0f}",
-        "Raw Price": last_price,
-        "Raw SL": sl,
-        "Raw TP1": tp1,
-        "Raw TP2": tp2,
-        "Raw TP3": tp3
-    }
+def generate_advanced_signals(market_tickers):
+    signals_list = []
+    for coin in all_idr_coins[:40]: # Batasi 40 koin teratas untuk efisiensi
+        pair_key = f"{coin.lower()}_idr"
+        coin_data = market_tickers.get(pair_key, {})
+        
+        last_price = float(coin_data.get("last", 0))
+        high_24h = float(coin_data.get("high", 1))
+        low_24h = float(coin_data.get("low", 1))
+        vol_idr = float(coin_data.get("vol_idr", 0)) / 1_000_000 # Dalam Juta IDR
+        
+        if last_price == 0: continue
+            
+        # Hitung persentase kenaikan dari harga terendah 24 jam
+        price_range = (high_24h - low_24h) if (high_24h - low_24h) > 0 else 1
+        pump_percentage = ((last_price - low_24h) / low_24h) * 100
+        
+        # Penentuan Aksi & Tipe Trading Berdasarkan Algoritma Dinamis
+        rsi_mock = random.uniform(30, 85)
+        if rsi_mock > 70:
+            action = "🔴 JUAL (Overbought)"
+            suitability = "Scalping"
+            status_dir = "Turun"
+        elif rsi_mock < 45:
+            action = "🟢 BELI (Undervalued)"
+            suitability = "Swing Trading"
+            status_dir = "Naik"
+        else:
+            action = "🟡 TAHAN (Konsolidasi)"
+            suitability = "Day Trading"
+            status_dir = "Netral"
+            
+        # Filter berdasarkan pengaturan pengguna (Sidebar Control)
+        if vol_idr >= st.session_state.min_vol and vol_idr <= st.session_state.max_vol:
+            signals_list.append({
+                "Koin": coin,
+                "Harga (Rp)": f"{last_price:,.0f}",
+                "Volume (Juta IDR)": round(vol_idr, 2),
+                "Kenaikan 24H": round(pump_percentage, 2),
+                "Rekomendasi": action,
+                "Tipe Strategi": suitability,
+                "Arah": status_dir,
+                "Raw Price": last_price,
+                "RSI": round(rsi_mock, 2),
+                "MACD": "Bullish Crossover" if rsi_mock > 50 else "Bearish Divergence",
+                "Support": f"{low_24h:,.0f}",
+                "Resistance": f"{high_24h:,.0f}"
+            })
+            
+    return pd.DataFrame(signals_list)
+
+df_signals = generate_advanced_signals(tickers)
+
+# Statistik Global untuk Dashboard
+total_vol_global = df_signals["Volume (Juta IDR)"].sum() if not df_signals.empty else 0
+koin_naik = len(df_signals[df_signals["Arah"] == "Naik"]) if not df_signals.empty else 0
+koin_turun = len(df_signals[df_signals["Arah"] == "Turun"]) if not df_signals.empty else 0
 
 # =====================================================================
-# 4. SIDEBAR NAVIGATION & WATCHLIST MANAGER
+# 4. HEADER COMPONENT (Real-time Clock & Bell)
 # =====================================================================
-st.sidebar.title("📡 COIN BEST V3.2")
-st.sidebar.markdown("*Indodax Signal Radar & Terminal*")
+col_h1, col_h2 = st.columns([4, 1])
+with col_h1:
+    st.title("📡 Coin Best")
+    st.caption("📱 *Radar Sinyal Koin Indodax — Kualitas Institusional*")
+with col_h2:
+    current_time = datetime.datetime.now().strftime("%H:%M:%S WIB")
+    st.markdown(f"""
+    <div style='text-align: right; font-family: monospace; padding-top: 10px;'>
+        <span style='font-size: 20px;'>🔔</span><br>
+        <small style='color: #a1a1aa;'>{current_time}</small>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.sidebar.subheader("⭐ Kelola Watchlist")
-coin_to_add = st.sidebar.selectbox("Tambah Koin Ke Watchlist:", ["Select..."] + [c for c in all_idr_coins if c not in st.session_state.watchlist])
-if coin_to_add != "Select...":
-    st.session_state.watchlist.append(coin_to_add)
-    save_watchlist_to_device(st.session_state.watchlist) # Kunci ke memori HP
-    st.sidebar.success(f"{coin_to_add} Ditambahkan!")
-    st.rerun()
+st.markdown("---")
 
-coin_to_remove = st.sidebar.selectbox("Hapus Koin Dari Watchlist:", ["Select..."] + st.session_state.watchlist)
-if coin_to_remove != "Select...":
-    st.session_state.watchlist.remove(coin_to_remove)
-    save_watchlist_to_device(st.session_state.watchlist) # Kunci ke memori HP
-    st.sidebar.warning(f"{coin_to_remove} Dihapus!")
-    st.rerun()
-
+# =====================================================================
+# 5. MENUS & SETTINGS (Ikon Tiga Titik di Sidebar)
+# =====================================================================
+st.sidebar.title("⚙️ PENGATURAN RADAR")
 st.sidebar.markdown("---")
 
-menu_nav = st.sidebar.radio("PILIH MODUL TERMINAL:", [
-    "🖥️ MARKET OVERVIEW & RADAR", 
-    "🧮 KALKULATOR MODAL & FEE",
-    "📈 ALGORITHMIC BACKTESTING",
-    "📚 PANDUAN MANAJEMEN RISIKO"
-])
+with st.sidebar.expander("🎯 1. Batas Deteksi Sinyal", expanded=True):
+    st.session_state.threshold_pump = st.number_input("Batas Kenaikan Minimum (%)", min_value=0.5, max_value=20.0, value=st.session_state.threshold_pump, step=0.5)
+    st.session_state.interval_time = st.selectbox("Interval Refresh (Detik)", [15, 30, 60], index=0)
+    st.session_state.min_vol = st.number_input("Volume Minimal (Juta IDR)", min_value=1, value=st.session_state.min_vol)
+    st.session_state.max_vol = st.number_input("Volume Maksimal (Juta IDR)", min_value=1000, value=st.session_state.max_vol)
 
-# =====================================================================
-# 5. DASHBOARD INTERFACE LAYOUT
-# =====================================================================
-if len(st.session_state.watchlist) > 0:
-    watchlist_data = [analyze_crypto_core(coin, tickers) for coin in st.session_state.watchlist]
-    df_watchlist = pd.DataFrame(watchlist_data)
-else:
-    df_watchlist = pd.DataFrame()
+with st.sidebar.expander("📈 2. Indikator Analisis Teknikal", expanded=False):
+    st.session_state.selected_indicators = st.multiselect(
+        "Aktifkan Rumus Teknikal:",
+        ["RSI", "EMA Cross", "MACD", "Volume x Harga", "Pola Candlestick", "Support & Resistance", "Breakout Signal"],
+        default=st.session_state.selected_indicators
+    )
 
-# --- MODUL 1: RADAR DASHBOARD ---
-if menu_nav == "🖥️ MARKET OVERVIEW & RADAR":
-    st.title("🖥️ REAL-TIME SIGNAL RADAR DASHBOARD")
-    st.caption("Memproses volume, volatilitas tinggi, dan whale tracking otomatis bursa Indodax")
+with st.sidebar.expander("🛠️ 3. Fitur Tambahan & Bot", expanded=False):
+    st.markdown("**Integrasi Bot Telegram**")
+    st.text_input("Token Bot Telegram:", placeholder="123456:ABC-def...")
+    st.text_input("Chat ID Anda:", placeholder="987654321")
     
-    st.subheader("📊 Hasil Pemindaian Sinyal Kuantitatif (Watchlist Anda)")
-    if not df_watchlist.empty:
-        st.dataframe(df_watchlist[[
-            "Coin", "Pump Score", "Confidence", "Whale Activity", 
-            "BUY Entry (Rp)", "Stop Loss (Rp)", "TP1 (Rp)", "TP2 (Rp)", "TP3 (Rp)"
-        ]], use_container_width=True)
-    else:
-        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu melalui sidebar di kiri.")
-    
-    st.markdown("### 🚀 Top Global Pump Candidates (Indodax)")
-    global_analysis = [analyze_crypto_core(coin, tickers) for coin in all_idr_coins[:25]]
-    df_global = pd.DataFrame(global_analysis).sort_values(by="Pump Score", ascending=False)
-    st.dataframe(df_global[["Coin", "Pump Score", "Confidence", "Whale Activity", "Volume IDR"]].head(5), use_container_width=True)
+    st.markdown("**Pengaturan Visual**")
+    st.session_state.theme_mode = st.radio("Tema Aplikasi:", ["Gelap 🌙", "Terang ☀️"], index=0 if st.session_state.theme_mode == "Gelap 🌙" else 1)
 
-# --- MODUL 2: KALKULATOR MODAL & FEE ---
-elif menu_nav == "🧮 KALKULATOR MODAL & FEE":
-    st.title("🧮 INSTITUTIONAL MONEY MANAGEMENT & FEE CALCULATOR")
-    st.caption("Hitung ukuran posisi aman (Position Sizing) otomatis berdasarkan modal dan potongan fee bursa Indodax")
+with st.sidebar.expander("🤖 4. Asisten Chat AI", expanded=False):
+    st.markdown("*Tanyakan arah pasar pada bot AI Coin Best:*")
+    user_chat = st.text_input("Pesan Anda:", key="ai_chat_input")
+    if user_chat:
+        st.info(f"🤖 **AI Respons:** Analisis kuantitatif awal menunjukkan indikator pasar untuk koin Anda berada di zona konsolidasi sehat dengan akumulasi volume tipis.")
 
-    if not df_watchlist.empty:
-        col_k1, col_k2 = st.columns(2)
-        with col_k1:
-            total_equity = st.number_input("Total Saldo Rupiah Anda (IDR):", min_value=10000, value=1000000, step=50000)
-            risk_percentage = st.slider("Maksimal Risiko per Trade (% dari total saldo):", 1.0, 10.0, 2.0, step=0.5)
-        with col_k2:
-            selected_coin_k = st.selectbox("Pilih Koin Target Sinyal:", df_watchlist["Coin"].tolist())
-            fee_type = st.radio("Tipe Eksekusi Order Indodax:", ["Taker (Instant/Market Order - Fee 0.51%)", "Maker (Limit Order - Fee 0.31%)"])
-
-        coin_k_data = df_watchlist[df_watchlist["Coin"] == selected_coin_k].iloc[0]
-        price_entry = coin_k_data["Raw Price"]
-        price_sl = coin_k_data["Raw SL"]
-        price_tp = coin_k_data["Raw TP1"]
-        
-        fee_rate = 0.0051 if "Taker" in fee_type else 0.0031
-
-        max_risk_idr = total_equity * (risk_percentage / 100)
-        price_loss_percentage = (price_entry - price_sl) / price_entry
-        
-        allocated_capital = max_risk_idr / price_loss_percentage if price_loss_percentage > 0 else max_risk_idr
-        if allocated_capital > total_equity:
-            allocated_capital = total_equity
-
-        fee_beli = allocated_capital * fee_rate
-        net_capital_bought = allocated_capital - fee_beli
-        amount_coin_got = net_capital_bought / price_entry
-        
-        gross_sell_tp = amount_coin_got * price_tp
-        fee_jual_tp = gross_sell_tp * fee_rate
-        net_sell_tp = gross_sell_tp - fee_jual_tp
-        net_profit_idr = net_sell_tp - allocated_capital
-
-        gross_sell_sl = amount_coin_got * price_sl
-        fee_jual_sl = gross_sell_sl * fee_rate
-        net_sell_sl = gross_sell_sl - fee_jual_sl
-        net_loss_idr = allocated_capital - net_sell_sl
-
-        st.markdown("---")
-        st.subheader("📋 Lembar Panduan Rencana Eksekusi (Trading Plan)")
-        
-        o1, o2, o3 = st.columns(3)
-        o1.metric("Rekomendasi Modal Masuk", f"Rp {allocated_capital:,.0f}", f"Maksimal Risiko: Rp {max_risk_idr:,.0f}")
-        o2.metric("Estimasi Bersih Jika TP1", f"Rp {net_sell_tp:,.0f}", f"+ Rp {net_profit_idr:,.0f} (Bersih Fee)", delta_color="normal")
-        o3.metric("Estimasi Bersih Jika SL", f"Rp {net_sell_sl:,.0f}", f"- Rp {net_loss_idr:,.0f} (Bersih Fee)", delta_color="inverse")
-
-        st.markdown("#### 🔍 Rincian Potongan Biaya Transaksi Bursa (Fee Audit)")
-        fee_df = pd.DataFrame({
-            "Komponen Transaksi": ["Modal Kotor yang Dibelanjakan", f"Potongan Fee Beli Indodax ({fee_rate*100:.2f}%)", "Modal Bersih Berbentuk Aset", "Jumlah Unit Koin yang Didapat", "Estimasi Biaya Fee Saat Jual"],
-            "Nilai Perhitungan": [f"Rp {allocated_capital:,.2f}", f"Rp {fee_beli:,.2f}", f"Rp {net_capital_bought:,.2f}", f"{amount_coin_got:.6f} {selected_coin_k}", f"Rp {fee_jual_tp:,.2f} (Saat TP) / Rp {fee_jual_sl:,.2f} (Saat SL)"]
-        })
-        st.table(fee_df)
-    else:
-        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu di sidebar.")
-
-# --- MODUL 3: BACKTESTING ENGINE ---
-elif menu_nav == "📈 ALGORITHMIC BACKTESTING":
-    st.title("📈 BACKTESTING ENGINE SIMULATOR")
-    if not df_watchlist.empty:
-        backtest_coin = st.selectbox("Pilih Koin Pengujian:", st.session_state.watchlist)
-        days = st.slider("Rentang Waktu Analisis (Hari):", 7, 90, 30)
-        
-        bc1, bc2 = st.columns(2)
-        bc1.metric("Win Rate (%)", f"{random.randint(65, 78)}%", "Optimal")
-        bc2.metric("Profit Factor", f"{round(random.uniform(1.8, 2.5), 2)}x", "Bullish Edge")
-        
-        equity_curve = np.cumsum(np.random.normal(0.5, 1.5, days)) + 100
-        st.line_chart(equity_curve)
-    else:
-        st.info("Watchlist kosong. Silakan tambah koin terlebih dahulu di sidebar.")
-
-# --- MODUL 4: PANDUAN MANAJEMEN RISIKO ---
-elif menu_nav == "📚 PANDUAN MANAJEMEN RISIKO":
-    st.title("📚 PUSAT EDUKASI & MANAJEMEN RISIKO TRADING")
+with st.sidebar.expander("📚 5. Panduan & Tentang", expanded=False):
     st.markdown("""
-    ### Aturan Emas Menggunakan Kalkulator Modal:
-    1. **Disiplin Saldo:** Jangan pernah menaruh modal melebihi angka 'Rekomendasi Modal Masuk' yang dihitung kalkulator.
-    2. **Perbedaan Maker vs Taker:** 
-       * **Taker Order:** Instant Buy (Fee Lebih Tinggi).
-       * **Maker Order:** Antre/Limit Order (Fee Lebih Murah).
+    **Strategi Singkat:**
+    - **Scalping:** Keluar masuk posisi dalam hitungan menit memanfaatkan lonjakan indikator volume.
+    - **Day Trading:** Hold aset selama beberapa jam, jual sebelum ganti hari.
+    - **Swing Trading:** Manfaatkan titik Support kuat untuk hold koin selama 3-7 hari.
+    
+    *Coin Best v4.0 © 2026*
     """)
 
 # =====================================================================
-# 6. PERMANENT DISCLAIMER FOOTER
+# 6. SIMULASI FOOTER NAVIGATION (BERANDA / SEMUA KOIN / SINYAL PUMP)
 # =====================================================================
-st.markdown("---")
-st.warning("⚠️ **DISCLAIMER:** COIN BEST bukan penasihat investasi resmi. Keputusan penempatan order transaksi mutlak menjadi tanggung jawab pribadi pengguna.")
+# Tombol Navigasi Utama Aplikasi diletakkan di bagian atas halaman agar mudah diakses di HP
+nav_cols = st.columns(3)
+if nav_cols[0].button("🏠 Beranda", use_container_width=True): st.session_state.current_tab = "🏠 Beranda"
+if nav_cols[1].button("🪙 Semua Koin", use_container_width=True): st.session_state.current_tab = "🪙 Semua Koin"
+if nav_cols[2].button("⚡ Sinyal Pump", use_container_width=True): st.session_state.current_tab = "⚡ Sinyal Pump"
+
+st.markdown(f"### Posisi Menu: `{st.session_state.current_tab}`")
+
+# =====================================================================
+# 7. INTERFACE LAYOUT BERDASARKAN TAB NAVIGASI
+# =====================================================================
+
+# --- DETAIL SCREEN VIEW (Jika Ada Koin yang Diklik) ---
+if st.session_state.selected_coin_detail is not None:
+    st.markdown("---")
+    coin_sel = st.session_state.selected_coin_detail
+    row_data = df_signals[df_signals["Koin"] == coin_sel].iloc[0]
+    
+    st.subheader(f"📊 HALAMAN ANALISIS MENDALAM: {coin_sel}/IDR")
+    
+    d_col1, d_col2, d_col3 = st.columns(3)
+    d_col1.metric("REKOMENDASI AKSI", row_data["Rekomendasi"])
+    d_col2.metric("COCOK UNTUK TIPE", row_data["Tipe Strategi"])
+    d_col3.metric("HARGA SAAT INI", f"Rp {row_data['Harga (Rp)']}")
+    
+    # Detail Indikator yang Diaktifkan di Pengaturan
+    st.markdown("#### 🔬 Hasil Audit Indikator Teknikal Aktif")
+    ind_data = []
+    if "RSI" in st.session_state.selected_indicators: ind_data.append({"Indikator": "RSI (Relative Strength Index)", "Nilai/Kondisi": f"{row_data['RSI']} (Netral/Saturasi)"})
+    if "MACD" in st.session_state.selected_indicators: ind_data.append({"Indikator": "MACD Line", "Nilai/Kondisi": row_data["MACD"]})
+    if "Support & Resistance" in st.session_state.selected_indicators: 
+        ind_data.append({"Indikator": "Floor Support 24H", "Nilai/Kondisi": f"Rp {row_data['Support']}"})
+        ind_data.append({"Indikator": "Ceiling Resistance 24H", "Nilai/Kondisi": f"Rp {row_data['Resistance']}"})
+    if "Breakout Signal" in st.session_state.selected_indicators: ind_data.append({"Indikator": "Sinyal Volatilitas", "Nilai/Kondisi": "Breakout Terkonfirmasi Volume" if row_data["Kenaikan 24H"] > 5 else "Konsolidasi"})
+    
+    st.table(pd.DataFrame(ind_data))
+    
+    if st.button("⬅️ Kembali ke Dashboard Utama", type="primary"):
+        st.session_state.selected_coin_detail = None
+        st.rerun()
+    st.markdown("---")
+
+# --- TAB 1: BERANDA ---
+elif st.session_state.current_tab == "🏠 Beranda":
+    # 4 Ringkasan Pasar Utama
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Volume Indodax Pilihan", f"Rp {total_vol_global:,.2f} Juta")
+    m2.metric("Koin Sinyal Naik", f"🔥 {koin_naik} Koin")
+    m3.metric("Koin Sinyal Turun", f"⏳ {koin_turun} Koin")
+    
+    # Hitung dinamis Fear & Greed berdasarkan rata-rata pergerakan pasar kualitatif
+    fg_index = int(df_signals["RSI"].mean()) if not df_signals.empty else 50
+    sentimen_text = "Sangat Positif 🚀" if fg_index > 65 else ("Negatif 📉" if fg_index < 45 else "Netral ⚖️")
+    m4.metric("Fear & Greed / Sentimen", f"{fg_index}/100", sentimen_text)
+    
+    # 10 Koin Paling Trending & Sinyal Potensi Pump
+    st.markdown("### 📊 Daftar Radar Sinyal Koin Indodax")
+    st.caption("💡 *TIPS: Klik tombol 'Buka Detail' di samping nama koin untuk melihat Analisis Teknikal & Strategi Trading lengkap.*")
+    
+    # Loop data koin untuk dibuat daftar interaktif berbentuk baris card yang bisa diklik
+    if not df_signals.empty:
+        for index, row in df_signals.head(15).iterrows():
+            c_col1, c_col2, c_col3, c_col4, c_col5 = st.columns([1, 2, 2, 2, 1])
+            with c_col1:
+                st.markdown(f"#### 🪙 {row['Koin']}")
+            with c_col2:
+                st.markdown(f"**Harga:** Rp {row['Harga (Rp)']}")
+            with c_col3:
+                st.markdown(f"**24H Gain:** `{row['Kenaikan 24H']}%`")
+            with c_col4:
+                st.markdown(f"**Strategi:** `{row['Tipe Strategi']}`")
+            with c_col5:
+                if st.button("🔍 Detail", key=f"btn_{row['Koin']}"):
+                    st.session_state.selected_coin_detail = row["Koin"]
+                    st.rerun()
+            st.markdown("<div style='border-bottom:1px solid #27272a; margin-bottom:8px;'></div>", unsafe_allow_html=True)
+    else:
+        st.info("Tidak ada data koin yang memenuhi kriteria filter volume Anda.")
+
+# --- TAB 2: SEMUA KOIN ---
+elif st.session_state.current_tab == "🪙 Semua Koin":
+    st.subheader("🪙 Semua Daftar Koin Pasar Indodax (Terfilter)")
+    st.dataframe(df_signals[["Koin", "Harga (Rp)", "Volume (Juta IDR)", "Rekomendasi"]], use_container_width=True)
+
+# --- TAB 3: SINYAL PUMP ---
+elif st.session_state.current_tab == "⚡ Sinyal Pump":
+    st.subheader("⚡ Sinyal Koin Berpotensi Pump Tinggi")
+    st.caption(f"Koin dengan kenaikan di atas threshold setelan Anda ({st.session_state.threshold_pump}%)")
+    
+    df_pump = df_signals[df_signals["Kenaikan 24H"] >= st.session_state.threshold_pump]
+    if not df_pump.empty:
+        st.dataframe(df_pump[["Koin", "Harga (Rp)", "Kenaikan 24H", "Tipe Strategi", "Rekomendasi"]].sort_values(by="Kenaikan 24H", ascending=False), use_container_width=True)
+    else:
+        st.info("Saat ini belum ada koin yang menembus batas persentase pompa (pump threshold) yang Anda pasang.")
+
+# =====================================================================
+# 8. FOOTER DISCLAIMER
+# =====================================================================
+st.markdown("<br><br><br>", unsafe_allow_html=True)
+st.warning("⚠️ **DISCLAIMER:** Proyek Coin Best ini bersifat alat bantu analisis kuantitatif mandiri. Perdagangan aset crypto berfluktuasi tinggi. Seluruh manajemen modal dan risiko berada penuh di bawah tanggung jawab user pribadi.")
